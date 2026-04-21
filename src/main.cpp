@@ -6,41 +6,34 @@
 #include "sched.h"
 #include <vector>
 #include <algorithm>
-
-int pinToCore(int coreNumber){
-    cpu_set_t mask;
-    CPU_ZERO(&mask);
-    CPU_SET(coreNumber, &mask);
-    if(sched_setaffinity(0, sizeof(cpu_set_t), &mask) == -1){
-        perror("sched_setaffinity");
-        return -1;
-    }
-     return 0;
-}
-auto getLatency(std::chrono::nanoseconds interval){
-    auto startTime = std::chrono::steady_clock::now();
-    auto targetime = startTime + interval;
-            while(std::chrono::steady_clock::now() < targetime){
-                __builtin_ia32_pause();
-            }
-        auto actualEnd = std::chrono::steady_clock::now();
-        auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(actualEnd - targetime);
-        return latency.count(); 
-}
+#include <memory>
+#include <thread>
+#include <atomic>
+#include "rt_scope/worker.hpp"
 
 int main(){
     int iterations =  1000;
-    auto interval = std::chrono::milliseconds(1);
-    std::vector<long long> results;
-    results.reserve(1000);
-    if(pinToCore(0) != 0){
-        std::cout<<"Core not pinned"<<std::endl;
-        return 1;
+   std::vector<std::unique_ptr<rt_scope::Worker>> worker;
+   int maxCores = std::thread::hardware_concurrency();
+   std::vector<std::thread> threads_;
+   std::atomic<bool> startSignal(false);
+   //std::cout<<"No of cores: "<<maxCores;
+   for(unsigned int core = 0; core < maxCores; core++){
+    worker.push_back(std::make_unique<rt_scope::Worker>(core, &startSignal, iterations));
+    threads_.emplace_back(&rt_scope::Worker::run, worker.back().get());
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    std::cout << "Triggering measurement across all cores..." << std::endl;
+    startSignal.store(true, std::memory_order_release);
+   }
+   for(auto &thread:threads_){
+    if(thread.joinable()){
+        thread.join();
     }
-    for(int i = 0; i < iterations; i++ ){
-        results.push_back(getLatency(interval));
+   }
+   std::cout << "\n--- Final Latency Results (ns) ---" << std::endl;
+    for (const auto& w : worker) {
+        printf("Core %2d: Max Jitter = %lld ns\n", w->getCore(), w->getMaxLatency());
     }
-    auto max_latency = *std::max_element(results.begin(), results.end());
-    std::cout << "Max Latency: " << max_latency << " ns" << std::endl;
     return 0;
 }
