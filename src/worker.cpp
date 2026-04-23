@@ -2,14 +2,14 @@
 
 namespace rt_scope
 {
-    Worker::Worker(int coreId_, std::atomic<bool>*startSignal_, int interval):coreId(coreId_) , startSignal(startSignal_)
+    Worker::Worker(int coreId_, std::atomic<bool>*startSignal_, int interval, size_t num_buckets, uint64_t bucket_size_ns):coreId(coreId_) , startSignal(startSignal_), stats_(num_buckets, bucket_size_ns)
     {
         latencies.reserve(interval);
     }
      Worker::~Worker()
     {
     }
-    int Worker::run(){
+    int Worker::run(int iterations){
          cpu_set_t mask;
         CPU_ZERO(&mask);
         CPU_SET(coreId, &mask);
@@ -23,6 +23,7 @@ namespace rt_scope
         #endif
     }
     auto const interval = std::chrono::microseconds(100);
+    for(int i = 0; i<iterations; i++){
     auto startTime = std::chrono::steady_clock::now();
     auto targetime = startTime + interval;
             while(std::chrono::steady_clock::now() < targetime){
@@ -30,16 +31,20 @@ namespace rt_scope
             }
         auto actualEnd = std::chrono::steady_clock::now();
         auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(actualEnd - targetime);
-        latencies.push_back(latency.count());
+        stats_.record(static_cast<uint64_t>(latency.count()));
+         } //latencies.push_back(latency.count());
      return 0;
     }
 
-    long long Worker::getMaxLatency(){
+   /**long long Worker::getMaxLatency(){
          auto max_latency = *std::max_element(latencies.begin(), latencies.end());
          return max_latency;
-    }
+    }**/
     int Worker::getCore(){
         return coreId;
+    }
+    const Histogram& Worker::get_stats() const{
+        return stats_;
     }
 
 }
